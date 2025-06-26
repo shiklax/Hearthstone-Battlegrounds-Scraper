@@ -1,0 +1,27 @@
+# Standardowy .gitignore dla projektów Visual Studio / .NET
+
+## Ignoruj pliki wygenerowane przez system operacyjny
+*.swp
+*~
+._*
+.DS_Store
+Thumbs.db
+
+## Ignoruj pliki i foldery generowane przez Visual Studio i .NET
+*.user
+*.suo
+*.sln.docstates
+.vs/
+bin/
+obj/
+/packages
+*.nupkg
+
+## Ignoruj lokalne pliki konfiguracyjne (na przyszłość)
+appsettings.Development.json
+secrets.json
+
+## Ignoruj pliki baz danych
+*.db
+*.db-shm
+*.db-wal

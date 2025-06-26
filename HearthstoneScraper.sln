@@ -1,0 +1,37 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36203.30 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HearthstoneScraper", "HearthstoneScraper\HearthstoneScraper.csproj", "{DCF42278-2B1A-4739-B094-38276DA90B40}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HearthstoneScraper.Data", "HearthstoneScraper.Data\HearthstoneScraper.Data.csproj", "{2AB08F89-B6C0-40F0-87CC-7FE11A040F03}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HearthstoneScraper.Viewer", "HearthstoneScraper.Viewer\HearthstoneScraper.Viewer.csproj", "{B5AFD71D-AB1D-4FE1-992E-492A271745A4}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DCF42278-2B1A-4739-B094-38276DA90B40}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DCF42278-2B1A-4739-B094-38276DA90B40}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DCF42278-2B1A-4739-B094-38276DA90B40}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DCF42278-2B1A-4739-B094-38276DA90B40}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2AB08F89-B6C0-40F0-87CC-7FE11A040F03}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2AB08F89-B6C0-40F0-87CC-7FE11A040F03}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2AB08F89-B6C0-40F0-87CC-7FE11A040F03}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2AB08F89-B6C0-40F0-87CC-7FE11A040F03}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B5AFD71D-AB1D-4FE1-992E-492A271745A4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B5AFD71D-AB1D-4FE1-992E-492A271745A4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B5AFD71D-AB1D-4FE1-992E-492A271745A4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B5AFD71D-AB1D-4FE1-992E-492A271745A4}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {838FDD2D-2AD6-491A-93C9-7799435E1578}
+	EndGlobalSection
+EndGlobal
