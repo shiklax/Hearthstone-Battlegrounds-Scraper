@@ -1,12 +1,16 @@
 ﻿// HearthstoneScraper/Program.cs
 using System;
+using System.IO;
+using System.Net.Http;
 using System.Threading.Tasks;
 using HearthstoneScraper.Data;
 using HearthstoneScraper.Scrapers;
-using System.IO; // <-- DODAJ TEN USING
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Polly; // Ważny using
+using Polly.Extensions.Http; // Ważny using
+using Serilog;
 
 namespace HearthstoneScraper
 {
@@ -14,50 +18,86 @@ namespace HearthstoneScraper
     {
         public static async Task Main(string[] args)
         {
-            var host = Host.CreateDefaultBuilder(args)
-                 .ConfigureServices((context, services) =>
-                 {
-                     // --- POCZĄTEK ZMIAN ---
+            // Konfiguracja Seriloga (bez zmian)
+            string logFileName = $"logs/scraper_{DateTime.Now:yyyyMMdd_HHmmss}.log";
+            Log.Logger = new LoggerConfiguration()
+                .MinimumLevel.Debug()
+                .MinimumLevel.Override("Default", Serilog.Events.LogEventLevel.Information)
+                .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+                .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
+                .Enrich.FromLogContext()
+                .WriteTo.Console()
+                .WriteTo.File(logFileName)
+                .CreateLogger();
 
-                     // 1. Definiujemy bezpieczną ścieżkę do bazy danych
-                     // Pobieramy ścieżkę do folderu "Dokumenty" bieżącego użytkownika
-                     var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-                     var dbPath = Path.Combine(documentsPath, "HearthstoneScraper", "hearthstone_leaderboard.db");
-
-                     // Upewniamy się, że folder istnieje
-                     Directory.CreateDirectory(Path.GetDirectoryName(dbPath));
-
-                     // Informujemy użytkownika, gdzie będzie baza
-                     Console.WriteLine($"Baza danych zostanie utworzona w: {dbPath}");
-
-                     // 2. Dodaj DbContext, używając pełnej ścieżki
-                     services.AddDbContext<AppDbContext>(options =>
-                         options.UseSqlite($"Data Source={dbPath}"));
-
-                     // --- KONIEC ZMIAN ---
-
-                     // 3. Dodaj HttpClient do komunikacji z API
-                     services.AddHttpClient();
-
-                     // 4. Zarejestruj nasz scraper
-                     services.AddTransient<LeaderboardScraper>();
-                 })
-                 .Build();
-
-            // Automatycznie zastosuj migracje przy starcie aplikacji
-            // To stworzy bazę danych, jeśli jej nie ma
-            using (var scope = host.Services.CreateScope())
+            try
             {
-                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                db.Database.Migrate();
+                Log.Information("Uruchamianie aplikacji...");
+
+                var host = Host.CreateDefaultBuilder(args)
+                    .UseSerilog()
+                    .ConfigureServices((context, services) =>
+                    {
+                        // Definiujemy ścieżkę do bazy (bez zmian)
+                        var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                        var dbPath = Path.Combine(documentsPath, "HearthstoneScraper", "hearthstone_leaderboard.db");
+                        Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
+
+                        services.AddDbContext<AppDbContext>(options =>
+                            options.UseSqlite($"Data Source={dbPath}"));
+
+                        // --- NOWA KONFIGURACJA Z RĘCZNYM WYKORZYSTANIEM POLLY ---
+
+                        // 1. Tworzymy politykę ponawiania prób
+                        var retryPolicy = HttpPolicyExtensions
+                            .HandleTransientHttpError()
+                            .Or<HttpRequestException>() // Reaguj na błędy HTTP ORAZ na wszystkie błędy sieciowe
+                            .WaitAndRetryAsync(
+                                3,
+                                retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                                onRetry: (outcome, timespan, retryAttempt, context) =>
+                                {
+                                    var statusCode = outcome.Result?.StatusCode;
+                                    var exceptionMessage = outcome.Exception?.GetBaseException().Message;
+                                    Log.Warning("Zapytanie do API nie powiodło się. Status: {StatusCode}, Błąd: {ExceptionMessage}. Czekam {TimeSpan} przed ponowieniem. Próba {RetryAttempt}/3",
+                                        statusCode, exceptionMessage, timespan, retryAttempt);
+                                }
+                            );
+
+                        // 2. Rejestrujemy politykę w kontenerze DI jako Singleton
+                        services.AddSingleton<IAsyncPolicy<HttpResponseMessage>>(retryPolicy);
+
+                        // 3. Rejestrujemy HttpClient w standardowy sposób
+                        services.AddHttpClient<LeaderboardScraper>();
+
+                        // --- KONIEC ZMIAN ---
+
+                        // Rejestrujemy nasz scraper
+                        services.AddTransient<LeaderboardScraper>();
+                    })
+                    .Build();
+
+                using (var scope = host.Services.CreateScope())
+                {
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    db.Database.Migrate();
+                }
+
+                var scraper = host.Services.GetRequiredService<LeaderboardScraper>();
+                await scraper.RunAsync();
+
+                Log.Information("Aplikacja zakończyła działanie pomyślnie.");
             }
-
-            // Uruchom główną logikę
-            var scraper = host.Services.GetRequiredService<LeaderboardScraper>();
-            await scraper.RunAsync();
-
-            Console.WriteLine("\nNaciśnij dowolny klawisz, aby zamknąć...");
-            Console.ReadKey();
+            catch (Exception ex)
+            {
+                Log.Fatal(ex.GetBaseException(), "Aplikacja zakończyła działanie z powodu nieoczekiwanego błędu.");
+            }
+            finally
+            {
+                await Log.CloseAndFlushAsync();
+                Console.WriteLine("\nNaciśnij dowolny klawisz, aby zamknąć...");
+                Console.ReadKey();
+            }
         }
     }
 }
