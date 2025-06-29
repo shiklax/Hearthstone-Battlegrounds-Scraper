@@ -81,13 +81,26 @@ namespace HearthstoneScraper.Scrapers
 
         private async Task<List<LeaderboardRow>> FetchAllPlayersAsync(int totalPages)
         {
+            // Ustawiamy sztywny limit, aby nie obciążać serwerów i zbierać spójne dane.
+            // Pobieramy dane z 40 stron, co daje nam TOP 1000 graczy.
+            const int pagesToFetch = 40;
+
+            // Dodatkowy log, żeby było wiadomo, co się dzieje
+            _logger.LogInformation("Pobieranie danych z {PagesCount} stron API...", pagesToFetch);
+
             var allPlayers = new List<LeaderboardRow>();
             var tasks = new List<Task<LeaderboardApiResponse>>();
-            for (int i = 1; i <= totalPages; i++)
+
+            // --- POCZĄTEK ZMIANY ---
+            // Pętla wykonuje się teraz od 1 do naszej stałej wartości 'pagesToFetch'.
+            // Ignorujemy 'totalPages' zwrócone przez API.
+            for (int i = 1; i <= pagesToFetch; i++)
+            // --- KONIEC ZMIANY ---
             {
                 string url = string.Format(ApiUrlTemplate, i);
                 tasks.Add(GetApiResponseAsync(url));
             }
+
             var responses = await Task.WhenAll(tasks);
             foreach (var response in responses)
             {
@@ -96,6 +109,8 @@ namespace HearthstoneScraper.Scrapers
                     allPlayers.AddRange(response.Leaderboard.Rows);
                 }
             }
+
+            // Sortujemy, aby mieć pewność, że gracze są w poprawnej kolejności
             return allPlayers.OrderBy(p => p.Rank).ToList();
         }
 
