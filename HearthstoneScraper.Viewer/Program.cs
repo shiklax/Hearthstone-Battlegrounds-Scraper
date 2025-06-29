@@ -11,6 +11,8 @@ using System.IO;
 using System.Linq;
 using System.Text; // <-- Może być potrzebny ten using
 using System.Threading.Tasks;
+using HearthstoneScraper.Core.Services;
+using HearthstoneScraper.Core.Dtos;
 
 public class Program
 {
@@ -25,41 +27,44 @@ public class Program
     }
 
     public static IHostBuilder CreateHostBuilder(string[] args) =>
-        Host.CreateDefaultBuilder(args)
-            // --- POCZĄTEK ZMIAN ---
-            .ConfigureLogging(logging =>
-            {
-                // Usuwamy wszystkich domyślnych dostawców logowania (np. konsolę)
-                logging.ClearProviders();
+     Host.CreateDefaultBuilder(args)
+                     .ConfigureLogging(logging =>
+                     {
+                         // Usuwamy wszystkich domyślnych dostawców logowania (np. konsolę)
+                         logging.ClearProviders();
 
-                // Możesz tu dodać własnego dostawcę, jeśli chcesz logować błędy do pliku
-                // np. logging.AddSerilog(...)
-                // Na razie zostawiamy puste, aby nic się nie wyświetlało.
-            })
-            // --- KONIEC ZMIAN ---
-            .ConfigureServices((context, services) =>
-            {
-                // Definiujemy ścieżkę do bazy danych
-                var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-                var dbPath = Path.Combine(documentsPath, "HearthstoneScraper", "hearthstone_leaderboard.db");
+                         // Możesz tu dodać własnego dostawcę, jeśli chcesz logować błędy do pliku
+                         // np. logging.AddSerilog(...)
+                         // Na razie zostawiamy puste, aby nic się nie wyświetlało.
+                     })
+         .ConfigureServices((context, services) =>
+         {
+             // Definiujemy ścieżkę do bazy danych
+             var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+             var dbPath = Path.Combine(documentsPath, "HearthstoneScraper", "hearthstone_leaderboard.db");
 
-                // Rejestrujemy DbContext
-                services.AddDbContext<AppDbContext>(options =>
-                    options.UseSqlite($"Data Source={dbPath}"));
+             // Rejestrujemy DbContext
+             services.AddDbContext<AppDbContext>(options =>
+                 options.UseSqlite($"Data Source={dbPath}"));
 
-                // Rejestrujemy naszą klasę UI
-                services.AddTransient<UserInterface>();
-            });
+             // <<< TA LINIA JEST KLUCZOWA I MUSI TU BYĆ >>>
+             // Mówimy kontenerowi: "Gdy ktoś poprosi o LeaderboardService, stwórz nową instancję".
+             services.AddTransient<LeaderboardService>();
+
+             // Rejestrujemy naszą klasę UI
+             services.AddTransient<UserInterface>();
+         });
 }
 
 // Klasa odpowiedzialna za cały interfejs użytkownika
 public class UserInterface
 {
     private readonly AppDbContext _db;
-
-    public UserInterface(AppDbContext dbContext)
+    private readonly LeaderboardService _leaderboardService;
+    public UserInterface(AppDbContext dbContext, LeaderboardService leaderboardService)
     {
         _db = dbContext;
+        _leaderboardService = leaderboardService;
     }
 
     public async Task RunAsync()
@@ -125,30 +130,20 @@ public class UserInterface
             Console.ReadKey(true);
         }
     }
-
-    // W pliku HearthstoneScraper.Viewer/Program.cs, w klasie UserInterface
-
     private async Task BrowseFullLeaderboardAsync()
     {
-        var latestTimestamp = await _db.RankHistory.MaxAsync(rh => (DateTime?)rh.ScrapeTimestamp);
-        if (latestTimestamp == null) { AnsiConsole.MarkupLine("[red]Brak danych w bazie![/]"); return; }
+        var allPlayers = await _leaderboardService.GetFullLeaderboardAsync();
+        if (!allPlayers.Any()) { AnsiConsole.MarkupLine("[red]Brak danych w bazie![/]"); return; }
 
-        // Pobieramy WSZYSTKICH graczy z ostatniej migawki do pamięci
-        var allPlayers = await _db.RankHistory
-            .Where(rh => rh.ScrapeTimestamp == latestTimestamp && rh.Rank != null)
-            .Include(rh => rh.Player)
-            .Select(rh => new { rh.Rank, rh.Player.BattleTag, rh.Rating })
-            .ToListAsync();
-
-        // --- Zmienne stanu dla interaktywnego widoku ---
+        // Reszta kodu (pętla, sortowanie, paginacja, renderowanie) pozostaje bez zmian,
+        // ponieważ operuje już na liście w pamięci.
         string sortBy = "Rank";
         bool ascending = true;
         int currentPage = 1;
-        const int pageSize = 20; // Ile rekordów na stronę
+        const int pageSize = 20;
 
         while (true)
         {
-            // 1. Sortowanie danych
             var sortedPlayers = sortBy switch
             {
                 "BattleTag" => ascending ? allPlayers.OrderBy(p => p.BattleTag, StringComparer.OrdinalIgnoreCase).ToList() : allPlayers.OrderByDescending(p => p.BattleTag, StringComparer.OrdinalIgnoreCase).ToList(),
@@ -156,24 +151,17 @@ public class UserInterface
                 _ => ascending ? allPlayers.OrderBy(p => p.Rank).ToList() : allPlayers.OrderByDescending(p => p.Rank).ToList(),
             };
 
-            // 2. Paginacja
             int totalPlayers = sortedPlayers.Count;
             int totalPages = (int)Math.Ceiling(totalPlayers / (double)pageSize);
             if (currentPage < 1) currentPage = 1;
             if (currentPage > totalPages) currentPage = totalPages;
 
-            var playersOnPage = sortedPlayers
-                .Skip((currentPage - 1) * pageSize)
-                .Take(pageSize)
-                .ToList();
+            var playersOnPage = sortedPlayers.Skip((currentPage - 1) * pageSize).Take(pageSize).ToList();
 
-            // 3. Rysowanie tabeli
             AnsiConsole.Clear();
             var table = new Table().Expand().Border(TableBorder.Rounded);
-
             string title = $"[cyan]Pełny Ranking (Strona {currentPage}/{totalPages})[/]";
             table.Title(title);
-
             table.AddColumn(sortBy == "Rank" ? $"Rank {(ascending ? '▲' : '▼')}" : "Rank");
             table.AddColumn(sortBy == "BattleTag" ? $"BattleTag {(ascending ? '▲' : '▼')}" : "BattleTag");
             table.AddColumn(sortBy == "Rating" ? $"Rating {(ascending ? '▲' : '▼')}" : "Rating");
@@ -184,160 +172,121 @@ public class UserInterface
             }
             AnsiConsole.Write(table);
 
-            // 4. Wyświetlanie menu i nawigacji
+            AnsiConsole.Markup("[grey]Nawigacja:[/] [yellow][[←]][/] Poprzednia | Następna [yellow][[→]][/]");
             AnsiConsole.WriteLine();
-            AnsiConsole.Markup("[grey]Nawigacja:[/] ");
-            AnsiConsole.Markup("[yellow][[←]][/] Poprzednia | Następna [yellow][[→]][/]");
-            AnsiConsole.WriteLine(); // Przejdź do nowej linii
-
-            AnsiConsole.Markup("[grey]Sortuj:[/] ");
-            AnsiConsole.Markup("[yellow][[R]][/]ank, [yellow][[B]][/]attleTag, [yellow][[R]][/]ating | ");
+            AnsiConsole.Markup("[grey]Opcje:[/] ");
+            AnsiConsole.Markup("[yellow][[R]][/]ank, ");
+            AnsiConsole.Markup("[yellow][[B]][/]attleTag, ");
+            AnsiConsole.Markup("[yellow][[T]][/]ating | ");
             AnsiConsole.Markup("[grey]Kierunek:[/] [yellow][[Spacja]][/] | ");
             AnsiConsole.Markup("[grey]Wyjdź:[/] [yellow][[Q]][/]");
             AnsiConsole.WriteLine();
+
             var key = Console.ReadKey(true).Key;
 
-            // 5. Obsługa akcji użytkownika
             switch (key)
             {
                 case ConsoleKey.Q:
                 case ConsoleKey.Escape:
-                    return; // Wyjdź z pętli
-
+                    return;
                 case ConsoleKey.LeftArrow:
                     if (currentPage > 1) currentPage--;
                     break;
-
                 case ConsoleKey.RightArrow:
                     if (currentPage < totalPages) currentPage++;
                     break;
-
                 case ConsoleKey.Spacebar:
                     ascending = !ascending;
                     break;
-
                 case ConsoleKey.R:
                     sortBy = "Rank";
-                    ascending = true; // Domyślnie rank sortujemy rosnąco
+                    ascending = true;
                     break;
-
                 case ConsoleKey.B:
                     sortBy = "BattleTag";
                     break;
-
                 case ConsoleKey.T:
                     sortBy = "Rating";
-                    ascending = false; // Domyślnie rating sortujemy malejąco
+                    ascending = false;
                     break;
             }
         }
     }
-
-    // W pliku HearthstoneScraper.Viewer/Program.cs, w klasie UserInterface
-
     private async Task ShowPlayerStatsAsync()
     {
         var battleTag = AnsiConsole.Ask<string>("Wpisz [green]BattleTag[/] gracza, którego statystyki chcesz zobaczyć:");
 
-        // Pobieramy całą historię gracza, która ma rating
-        var playerHistory = await _db.RankHistory
-            .Include(h => h.Player)
-            .Where(h => h.Player.BattleTag.ToLower() == battleTag.ToLower() && h.Rating.HasValue)
-            .OrderBy(h => h.ScrapeTimestamp)
-            .Select(h => new { h.Rating, h.ScrapeTimestamp }) // Bierzemy tylko potrzebne dane
-            .ToListAsync();
+        // 1. Wywołujemy nasz serwis, aby wykonał całą logikę
+        AnsiConsole.MarkupLine("[yellow]Obliczanie statystyk...[/]");
+        PlayerStatsDto? stats = await _leaderboardService.GetPlayerStatsAsync(battleTag);
 
-        if (playerHistory.Count == 0)
+        // 2. Sprawdzamy wynik
+        if (stats == null)
         {
-            AnsiConsole.MarkupLine($"[red]Nie znaleziono żadnych danych rankingowych dla gracza: {battleTag}[/]");
+            AnsiConsole.MarkupLine($"[red]Gracz o BattleTagu '{battleTag}' nie został znaleziony w bazie danych.[/]");
             return;
         }
 
-        // --- Obliczanie statystyk ---
-        var peakRating = playerHistory.Max(h => h.Rating.Value);
-        var lowestRating = playerHistory.Min(h => h.Rating.Value);
-        var currentRating = playerHistory.Last().Rating.Value;
-        var averageRating = (int)playerHistory.Average(h => h.Rating.Value);
+        if (stats.DaysInRanking == 0)
+        {
+            AnsiConsole.MarkupLine($"[yellow]Gracz '{stats.BattleTag}' został znaleziony, ale nie ma jeszcze historii ratingu.[/]");
+            return;
+        }
 
-        // Obliczanie zmian dziennych
-        var dailyChanges = playerHistory
-            .GroupBy(h => h.ScrapeTimestamp.Date) // Grupujemy po dacie (bez godziny)
-            .Select(dayGroup => {
-                var first = dayGroup.First().Rating.Value;
-                var last = dayGroup.Last().Rating.Value;
-                return last - first;
-            })
-            .ToList();
-
-        var biggestGain = dailyChanges.Any() ? dailyChanges.Max() : 0;
-        var biggestLoss = dailyChanges.Any() ? dailyChanges.Min() : 0;
-
-        // Obliczanie dni w rankingu
-        var totalDaysTracked = await _db.RankHistory
-            .Where(h => h.Player.BattleTag.ToLower() == battleTag.ToLower())
-            .Select(h => h.ScrapeTimestamp.Date)
-            .Distinct()
-            .CountAsync();
-
-        var daysInRanking = playerHistory.Select(h => h.ScrapeTimestamp.Date).Distinct().Count();
-        var daysOutsideRanking = totalDaysTracked - daysInRanking;
-
-        // --- Wyświetlanie statystyk ---
+        // 3. Wyświetlamy gotowe dane z obiektu DTO
         var panel = new Panel(
             new Table()
                 .Border(TableBorder.None)
                 .AddColumn(new TableColumn("Statystyka").RightAligned())
                 .AddColumn(new TableColumn("Wartość").LeftAligned())
-                .AddRow("[bold]Najwyższy Rating:[/]", $"[yellow]{peakRating}[/]")
-                .AddRow("[bold]Najniższy Rating:[/]", $"[dim]{lowestRating}[/]")
-                .AddRow("[bold]Aktualny Rating:[/]", $"[white]{currentRating}[/]")
-                .AddRow("[bold]Średni Rating:[/]", $"[aqua]~{averageRating}[/]")
-                .AddRow("[bold]Największy dzienny zysk:[/]", $"[green]+{biggestGain}[/]")
-                .AddRow("[bold]Największa dzienna strata:[/]", $"[red]{biggestLoss}[/]")
-                .AddRow("[bold]Dni w rankingu:[/]", $"[green]{daysInRanking}[/]")
-                .AddRow("[bold]Dni poza rankingiem:[/]", $"[red]{daysOutsideRanking}[/]")
+                .AddRow("[bold]Najwyższy Rating:[/]", $"[yellow]{stats.PeakRating}[/]")
+                .AddRow("[bold]Najniższy Rating:[/]", $"[dim]{stats.LowestRating}[/]")
+                .AddRow("[bold]Aktualny Rating:[/]", $"[white]{stats.CurrentRating}[/]")
+                .AddRow("[bold]Średni Rating:[/]", $"[aqua]~{stats.AverageRating}[/]")
+                .AddRow("[bold]Największy dzienny zysk:[/]", $"[green]+{stats.BiggestDailyGain}[/]")
+                .AddRow("[bold]Największa dzienna strata:[/]", $"[red]{stats.BiggestDailyLoss}[/]")
+                .AddRow("[bold]Dni w rankingu:[/]", $"[green]{stats.DaysInRanking}[/]")
+                .AddRow("[bold]Dni poza rankingiem:[/]", $"[red]{stats.DaysOutsideRanking}[/]")
         )
-        .Header($"[bold white]Statystyki dla: {battleTag}[/]")
+        .Header($"[bold white]Statystyki dla: {stats.BattleTag}[/]")
         .Border(BoxBorder.Rounded)
         .Expand();
 
         AnsiConsole.Write(panel);
     }
-
     private async Task ComparePlayersChartAsync()
     {
         var battleTag1 = AnsiConsole.Ask<string>("Wpisz [green]BattleTag[/] pierwszego gracza:");
         var battleTag2 = AnsiConsole.Ask<string>("Wpisz [cyan]BattleTag[/] drugiego gracza:");
 
-        var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30);
+        // 1. Wywołujemy serwis, aby pobrał dane dla obu graczy
+        var comparisonData = await _leaderboardService.GetPlayerComparisonDataAsync(battleTag1, battleTag2);
 
-        var history = await _db.RankHistory
-            .Include(h => h.Player)
-            .Where(h => (h.Player.BattleTag.ToLower() == battleTag1.ToLower() || h.Player.BattleTag.ToLower() == battleTag2.ToLower())
-                        && h.Rating.HasValue && h.ScrapeTimestamp >= thirtyDaysAgo)
-            .OrderBy(h => h.ScrapeTimestamp)
-            .ToListAsync();
-
-        var player1History = history.Where(h => h.Player.BattleTag.ToLower() == battleTag1.ToLower()).ToList();
-        var player2History = history.Where(h => h.Player.BattleTag.ToLower() == battleTag2.ToLower()).ToList();
-
-        if (player1History.Count < 2 || player2History.Count < 2)
+        // Sprawdzamy, czy serwis zwrócił wystarczającą ilość danych
+        if (comparisonData == null)
         {
             AnsiConsole.MarkupLine("[red]Nie znaleziono wystarczających danych dla obu graczy, aby narysować wykres porównawczy.[/]");
             return;
         }
 
-        // --- Normalizacja danych (bez zmian) ---
-        var allTimestamps = player1History.Select(h => h.ScrapeTimestamp)
-            .Union(player2History.Select(h => h.ScrapeTimestamp))
+        // --- Logika normalizacji danych (specyficzna dla widoku konsolowego) ---
+        // Tworzymy wspólną oś czasu, biorąc wszystkie unikalne znaczniki czasu od obu graczy.
+        var allTimestamps = comparisonData.History1.Select(h => h.Timestamp)
+            .Union(comparisonData.History2.Select(h => h.Timestamp))
             .OrderBy(t => t)
             .ToList();
-        var player1Ratings = player1History.ToDictionary(h => h.ScrapeTimestamp, h => h.Rating.Value);
-        var player2Ratings = player2History.ToDictionary(h => h.ScrapeTimestamp, h => h.Rating.Value);
+
+        // Tworzymy słowniki dla łatwego dostępu do ratingu w danym punkcie czasu
+        var player1Ratings = comparisonData.History1.ToDictionary(h => h.Timestamp, h => h.Rating);
+        var player2Ratings = comparisonData.History2.ToDictionary(h => h.Timestamp, h => h.Rating);
+
+        // Przygotowujemy serie danych Y. Jeśli gracz nie ma odczytu w danym punkcie,
+        // używamy poprzedniej znanej wartości, aby linia na wykresie była ciągła.
         var ys1 = new List<double>();
         var ys2 = new List<double>();
-        double lastRating1 = player1Ratings.Values.First();
-        double lastRating2 = player2Ratings.Values.First();
+        double lastRating1 = player1Ratings.Values.FirstOrDefault();
+        double lastRating2 = player2Ratings.Values.FirstOrDefault();
+
         foreach (var timestamp in allTimestamps)
         {
             if (player1Ratings.TryGetValue(timestamp, out var rating1)) lastRating1 = rating1;
@@ -345,9 +294,11 @@ public class UserInterface
             ys1.Add(lastRating1);
             ys2.Add(lastRating2);
         }
+
+        // Oś X to po prostu kolejne punkty na naszej wspólnej osi czasu
         double[] xs = Enumerable.Range(1, allTimestamps.Count).Select(i => (double)i).ToArray();
 
-        // --- SEKCJA TWORZENIA WYKRESU (WERSJA FINALNA) ---
+        // --- Sekcja tworzenia i renderowania wykresu ---
         const int plotWidth = 90;
         const int plotHeight = 22;
 
@@ -357,18 +308,13 @@ public class UserInterface
         plt.Axis.Pen = new LinePen(SystemLineBrushes.Double, ConsoleColor.White);
         plt.Grid.Pen = new LinePen(SystemLineBrushes.Dotted, ConsoleColor.DarkGray);
 
-        // <<< ZMIANA: PRZYWRACAMY ETYKIETY I ZNACZNIKI DLA OSI Y >>>
+        // Włączamy etykiety i znaczniki tylko dla osi Y (rating)
         plt.Ticks.IsVisible = true;
-        //plt.Ticks.ShowTicksOn.X = false; // NADAL wyłączamy dla X
-        //plt.Ticks.ShowTicksOn.Y = true;  // WŁĄCZAMY dla Y
-
         plt.Ticks.Labels.IsVisible = true;
-        //plt.Ticks.Labels.ShowLabelsOn.X = false; // NADAL wyłączamy dla X
-        //plt.Ticks.Labels.ShowLabelsOn.Y = true;  // WŁĄCZAMY dla Y
         plt.Ticks.Labels.Color = ConsoleColor.Cyan;
-        plt.Ticks.Labels.Format = "F0";
+        plt.Ticks.Labels.Format = "F0"; // Formatowanie bez miejsc po przecinku
 
-        // Dodajemy serie danych
+        // Dodajemy obie serie danych z różnymi kolorami
         plt.AddSeries(xs, ys1.ToArray(), new PointPen(SystemPointBrushes.Braille, ConsoleColor.Green));
         plt.AddSeries(xs, ys2.ToArray(), new PointPen(SystemPointBrushes.Braille, ConsoleColor.Cyan));
 
@@ -377,15 +323,14 @@ public class UserInterface
         plt.Draw();
         plt.Render();
 
-        // Ręczne rysowanie etykiet dla osi X z datą początkową, środkową i końcową
+        // Ręczne rysowanie naszej czytelnej osi czasu
         string startDate = allTimestamps.First().ToString("MMM dd");
         string midDate = allTimestamps[allTimestamps.Count / 2].ToString("MMM dd");
         string endDate = allTimestamps.Last().ToString("MMM dd");
 
-        var axisLine = new string(' ', plotWidth + 8); // +8 to margines na etykiety osi Y
+        var axisLine = new string(' ', plotWidth + 8);
         var axisBuilder = new System.Text.StringBuilder(axisLine);
 
-        // Wstawiamy daty, uwzględniając margines po lewej stronie
         int leftMargin = 8;
         axisBuilder.Insert(leftMargin, startDate);
         axisBuilder.Insert(leftMargin + plotWidth / 2 - midDate.Length / 2, midDate);
@@ -395,58 +340,30 @@ public class UserInterface
 
         // Legenda
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"[green]■[/] - {battleTag1}");
-        AnsiConsole.MarkupLine($"[cyan]■[/] - {battleTag2}");
+        AnsiConsole.MarkupLine($"[green]■[/] - {comparisonData.BattleTag1}");
+        AnsiConsole.MarkupLine($"[cyan]■[/] - {comparisonData.BattleTag2}");
     }
-
     private async Task ShowDailyMoversAsync()
     {
         AnsiConsole.MarkupLine("[yellow]Obliczanie zmian w rankingu z ostatnich 24 godzin...[/]");
 
-        var twentyFourHoursAgo = DateTime.UtcNow.AddHours(-24);
+        // 1. Wywołujemy serwis, aby dostać gotowe dane
+        var movers = await _leaderboardService.GetDailyMoversAsync();
 
-        // Krok 1: Wykonujemy zapytanie do bazy, które jest "proste" dla EF Core
-        // Pobieramy tylko ID gracza i jego wpisy, a nie całe obiekty.
-        var playerEntries = await _db.RankHistory
-            .Where(h => h.ScrapeTimestamp >= twentyFourHoursAgo && h.Rating.HasValue)
-            .GroupBy(h => h.PlayerId) // Grupujemy po ID
-            .Where(g => g.Count() >= 2) // Bierzemy tylko grupy z co najmniej 2 wpisami
-            .Select(g => new {
-                PlayerId = g.Key,
-                Entries = g.OrderBy(h => h.ScrapeTimestamp) // Bierzemy wszystkie wpisy posortowane
-                           .Select(h => new { h.Rating, h.ScrapeTimestamp }) // I tylko potrzebne dane
-                           .ToList()
-            })
-            .ToListAsync(); // Materializujemy wyniki w pamięci
-
-        if (!playerEntries.Any())
+        if (!movers.Any())
         {
             AnsiConsole.MarkupLine("[red]Brak wystarczających danych do pokazania zmian w rankingu.[/]");
             AnsiConsole.MarkupLine("[grey]Upewnij się, że scraper został uruchomiony co najmniej dwa razy w ciągu ostatnich 24 godzin dla tych samych graczy.[/]");
             return;
         }
 
-        // Krok 2: Przetwarzamy wyniki w pamięci, co jest już bezpieczne
-        var movers = playerEntries
-            .Select(p => new {
-                p.PlayerId,
-                Change = p.Entries.Last().Rating.Value - p.Entries.First().Rating.Value, // Obliczamy zmianę
-                CurrentRating = p.Entries.Last().Rating.Value
-            })
-            .OrderByDescending(p => p.Change) // Sortujemy
-            .Take(20) // Bierzemy TOP 20
-            .ToList();
-
-        // Krok 3: Pobieramy BattleTagi dla naszej topowej 20-tki jednym zapytaniem
-        var playerIds = movers.Select(m => m.PlayerId).ToList();
-        var playersDict = await _db.Players
-            .Where(p => playerIds.Contains(p.Id))
-            .ToDictionaryAsync(p => p.Id, p => p.BattleTag);
-
-        // Tworzymy tabelę do wyświetlenia wyników
+        // 2. Wyświetlamy wyniki w tabeli
         var table = new Table().Expand().Border(TableBorder.Rounded);
         table.Title("[cyan]Największe zmiany w rankingu (ostatnie 24h)[/]");
-        table.AddColumn("Miejsce").AddColumn("BattleTag").AddColumn("Zmiana Ratingu").AddColumn("Aktualny Rating");
+        table.AddColumn("Miejsce");
+        table.AddColumn("BattleTag");
+        table.AddColumn("Zmiana Ratingu");
+        table.AddColumn("Aktualny Rating");
 
         int rank = 1;
         foreach (var mover in movers)
@@ -457,7 +374,7 @@ public class UserInterface
 
             table.AddRow(
                 rank.ToString(),
-                playersDict[mover.PlayerId], // Pobieramy BattleTag ze słownika
+                mover.BattleTag,
                 changeString,
                 mover.CurrentRating.ToString()
             );
@@ -466,112 +383,84 @@ public class UserInterface
 
         AnsiConsole.Write(table);
     }
-    // W pliku HearthstoneScraper.Viewer/Program.cs, w klasie UserInterface
-
     private async Task ShowPlayerRatingChartAsync()
     {
         var battleTag = AnsiConsole.Ask<string>("Wpisz [green]BattleTag[/] gracza, którego wykres chcesz zobaczyć:");
 
-        // Pobieramy historię gracza z ostatnich 30 dni, gdzie rating nie jest pusty
-        var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30);
-        var playerHistory = await _db.RankHistory
-            .Include(rh => rh.Player)
-            .Where(rh => rh.Player.BattleTag.ToLower() == battleTag.ToLower()
-                         && rh.Rating.HasValue
-                         && rh.ScrapeTimestamp >= thirtyDaysAgo)
-            .OrderBy(rh => rh.ScrapeTimestamp)
-            .ToListAsync();
+        // 1. Pobieramy dane z naszego serwisu
+        var result = await _leaderboardService.GetPlayerChartDataAsync(battleTag);
 
-        if (playerHistory.Count < 2)
+        // Sprawdzamy, czy mamy wystarczająco danych
+        if (result == null || result.Value.History.Count < 2)
         {
-            AnsiConsole.MarkupLine($"[red]Nie znaleziono wystarczających danych dla gracza '{battleTag}' z ostatnich 30 dni.[/]");
+            AnsiConsole.MarkupLine($"[red]Nie znaleziono wystarczających danych dla gracza '{battleTag}' do narysowania wykresu.[/]");
             return;
         }
 
-        AnsiConsole.MarkupLine($"\n[bold yellow]Wykres ratingu dla gracza: {playerHistory.First().Player.BattleTag}[/]");
-        AnsiConsole.MarkupLine($"[grey]Okres: {playerHistory.First().ScrapeTimestamp:yyyy-MM-dd} - {playerHistory.Last().ScrapeTimestamp:yyyy-MM-dd}[/]");
-        AnsiConsole.MarkupLine("[grey]Oś Y: Rating | Oś X: Kolejne odczyty w czasie[/]"); // <-- NOWA LINIA
-        // --- Przygotowanie danych (Oś X jako numery odczytów, Oś Y jako rating) ---
-        double[] xs = Enumerable.Range(1, playerHistory.Count).Select(i => (double)i).ToArray();
-        double[] ys = playerHistory.Select(h => (double)h.Rating.Value).ToArray();
+        var (playerName, history) = result.Value;
 
-        // --- Tworzenie i konfiguracja wykresu (zgodnie z przykładem 'AllSettingsDemonstration') ---
+        // 2. Przygotowujemy dane dla biblioteki ConsolePlot
+        double[] xs = Enumerable.Range(1, history.Count).Select(i => (double)i).ToArray();
+        double[] ys = history.Select(h => (double)h.Rating).ToArray();
 
-        // 1. Stwórz obiekt Plot
+        // 3. Wyświetlamy nagłówek
+        AnsiConsole.MarkupLine($"\n[bold yellow]Wykres ratingu dla gracza: {playerName}[/]");
+        AnsiConsole.MarkupLine($"[grey](Pokazywanie ostatnich {history.Count} odczytów)[/]");
+        AnsiConsole.MarkupLine("[grey]Oś Y: Rating | Oś X: Kolejne odczyty w czasie[/]");
+
+        // --- Sekcja tworzenia i konfiguracji wykresu ---
         var plt = new Plot(width: 80, height: 20);
 
-        // 2. Skonfiguruj wygląd wykresu, aby był czytelny
-        plt.Axis.IsVisible = true;
+        // Ustawiamy wygląd osi i siatki
         plt.Axis.Pen = new LinePen(SystemLineBrushes.Double, ConsoleColor.White);
-
-        plt.Grid.IsVisible = true;
         plt.Grid.Pen = new LinePen(SystemLineBrushes.Dotted, ConsoleColor.DarkGray);
 
+        // Konfigurujemy znaczniki i etykiety
         plt.Ticks.IsVisible = true;
-        plt.Ticks.Pen = new LinePen(SystemLineBrushes.Thin, ConsoleColor.Gray);
-
         plt.Ticks.Labels.IsVisible = true;
         plt.Ticks.Labels.Color = ConsoleColor.Cyan;
-        plt.Ticks.Labels.Format = "F0"; // Formatowanie bez miejsc po przecinku (dla ratingu)
 
-        // 3. Dodaj serię danych
+        // KLUCZOWA LINIA: Mówimy, jak formatować liczby na osiach
+        plt.Ticks.Labels.Format = "F0"; // "F0" = stałoprzecinkowy, 0 miejsc po przecinku
+
+        // Dodajemy naszą serię danych
         plt.AddSeries(xs, ys, new PointPen(SystemPointBrushes.Braille, ConsoleColor.Yellow));
 
-        // 4. Narysuj wszystko w buforze
+        // Rysujemy i renderujemy gotowy wykres
         plt.Draw();
-
-        // 5. Wyświetl gotowy wykres w konsoli
         plt.Render();
     }
-
     private async Task ShowTopLeaderboardAsync()
     {
         AnsiConsole.MarkupLine("[yellow]Pobieranie aktualnego rankingu...[/]");
 
-        // Używamy LINQ do odtworzenia logiki naszego widoku SQL
-        var latestTimestamp = await _db.RankHistory.MaxAsync(rh => (DateTime?)rh.ScrapeTimestamp);
+        var allPlayers = await _leaderboardService.GetFullLeaderboardAsync();
+        var topPlayers = allPlayers.OrderBy(p => p.Rank).Take(25);
 
-        if (latestTimestamp == null)
+        if (!topPlayers.Any())
         {
             AnsiConsole.MarkupLine("[red]Brak danych w bazie![/]");
             return;
         }
 
-        var topPlayers = await _db.RankHistory
-            .Where(rh => rh.ScrapeTimestamp == latestTimestamp && rh.Rank != null)
-            .Include(rh => rh.Player) // Dołączamy dane gracza (jak JOIN w SQL)
-            .OrderBy(rh => rh.Rank)
-            .Take(25)
-            .ToListAsync();
-
         var table = new Table().Expand().Border(TableBorder.Rounded);
         table.Title("[cyan]TOP 25 Graczy Battlegrounds (EU)[/]");
-        table.AddColumn("Rank");
-        table.AddColumn("BattleTag");
-        table.AddColumn("Rating");
+        table.AddColumn("Rank").AddColumn("BattleTag").AddColumn("Rating");
 
         foreach (var entry in topPlayers)
         {
             table.AddRow(
                 entry.Rank.ToString(),
-                entry.Player.BattleTag,
+                entry.BattleTag,
                 entry.Rating.ToString()
             );
         }
-
         AnsiConsole.Write(table);
     }
-
     private async Task ShowPlayerHistoryAsync()
     {
         var battleTag = AnsiConsole.Ask<string>("Wpisz [green]BattleTag[/] gracza, którego chcesz wyszukać:");
-
-        var playerHistory = await _db.RankHistory
-            .Include(rh => rh.Player)
-            .Where(rh => rh.Player.BattleTag.ToLower() == battleTag.ToLower())
-            .OrderByDescending(rh => rh.ScrapeTimestamp)
-            .Take(20) // Pokaż ostatnie 20 wpisów
-            .ToListAsync();
+        var playerHistory = await _leaderboardService.GetPlayerHistoryAsync(battleTag);
 
         if (!playerHistory.Any())
         {
@@ -580,33 +469,28 @@ public class UserInterface
         }
 
         var table = new Table().Expand().Border(TableBorder.Rounded);
-        table.Title($"[cyan]Historia dla gracza: {playerHistory.First().Player.BattleTag}[/]");
-        table.AddColumn("Data zapisu");
-        table.AddColumn("Rank");
-        table.AddColumn("Rating");
+        table.Title($"[cyan]Historia dla gracza: {playerHistory.First().BattleTag}[/]");
+        table.AddColumn("Data zapisu").AddColumn("Rank").AddColumn("Rating");
 
         foreach (var entry in playerHistory)
         {
             table.AddRow(
                 entry.ScrapeTimestamp.ToString("yyyy-MM-dd HH:mm"),
-                entry.Rank?.ToString() ?? "[grey]N/A[/]", // ?? obsługuje wartości NULL
+                entry.Rank?.ToString() ?? "[grey]N/A[/]",
                 entry.Rating?.ToString() ?? "[grey]N/A[/]"
             );
         }
-
         AnsiConsole.Write(table);
     }
-
     private async Task ShowDbStatsAsync()
     {
-        int playerCount = await _db.Players.CountAsync();
-        int historyCount = await _db.RankHistory.CountAsync();
+        var stats = await _leaderboardService.GetDbStatsAsync();
 
         var table = new Table().Border(TableBorder.Minimal);
         table.AddColumn("Statystyka");
         table.AddColumn("Wartość");
-        table.AddRow("Liczba śledzonych graczy", playerCount.ToString());
-        table.AddRow("Liczba wpisów w historii", historyCount.ToString());
+        table.AddRow("Liczba śledzonych graczy", stats.PlayerCount.ToString());
+        table.AddRow("Liczba wpisów w historii", stats.HistoryCount.ToString());
 
         AnsiConsole.Write(table);
     }

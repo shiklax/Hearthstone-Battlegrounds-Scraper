@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\HearthstoneScraper.Data\HearthstoneScraper.Data.csproj" />
+    <ProjectReference Include="..\HearthstoneScraper.Core\HearthstoneScraper.Core.csproj" />
   </ItemGroup>
 
 </Project>
