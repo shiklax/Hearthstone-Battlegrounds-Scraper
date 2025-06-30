@@ -1,15 +1,17 @@
 ﻿// HearthstoneScraper/Program.cs
 using System;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 using HearthstoneScraper.Data;
 using HearthstoneScraper.Scrapers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Polly; // Ważny using
-using Polly.Extensions.Http; // Ważny using
+using Polly;
+using Polly.Extensions.Http;
 using Serilog;
 
 namespace HearthstoneScraper
@@ -18,7 +20,7 @@ namespace HearthstoneScraper
     {
         public static async Task Main(string[] args)
         {
-            // Konfiguracja Seriloga (bez zmian)
+            // Konfiguracja Seriloga. Jest uniwersalna i pozostaje bez zmian.
             string logFileName = $"logs/scraper_{DateTime.Now:yyyyMMdd_HHmmss}.log";
             Log.Logger = new LoggerConfiguration()
                 .MinimumLevel.Debug()
@@ -30,74 +32,75 @@ namespace HearthstoneScraper
                 .WriteTo.File(logFileName)
                 .CreateLogger();
 
-            try
+            var host = CreateHostBuilder(args).Build();
+
+            // --- NOWA, POPRAWNA STRUKTURA URUCHOMIENIA ---
+            // Tworzymy "scope", aby poprawnie zarządzać cyklem życia usług, takich jak DbContext.
+            using (var scope = host.Services.CreateScope())
             {
-                Log.Information("Uruchamianie aplikacji...");
+                var services = scope.ServiceProvider;
 
-                var host = Host.CreateDefaultBuilder(args)
-                    .UseSerilog()
-                    .ConfigureServices((context, services) =>
-                    {
-                        // Definiujemy ścieżkę do bazy (bez zmian)
-                        var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-                        var dbPath = Path.Combine(documentsPath, "HearthstoneScraper", "hearthstone_leaderboard.db");
-                        Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
-
-                        services.AddDbContext<AppDbContext>(options =>
-                            options.UseSqlite($"Data Source={dbPath}"));
-
-                        // --- NOWA KONFIGURACJA Z RĘCZNYM WYKORZYSTANIEM POLLY ---
-
-                        // 1. Tworzymy politykę ponawiania prób
-                        var retryPolicy = HttpPolicyExtensions
-                            .HandleTransientHttpError()
-                            .Or<HttpRequestException>() // Reaguj na błędy HTTP ORAZ na wszystkie błędy sieciowe
-                            .WaitAndRetryAsync(
-                                3,
-                                retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
-                                onRetry: (outcome, timespan, retryAttempt, context) =>
-                                {
-                                    var statusCode = outcome.Result?.StatusCode;
-                                    var exceptionMessage = outcome.Exception?.GetBaseException().Message;
-                                    Log.Warning("Zapytanie do API nie powiodło się. Status: {StatusCode}, Błąd: {ExceptionMessage}. Czekam {TimeSpan} przed ponowieniem. Próba {RetryAttempt}/3",
-                                        statusCode, exceptionMessage, timespan, retryAttempt);
-                                }
-                            );
-
-                        // 2. Rejestrujemy politykę w kontenerze DI jako Singleton
-                        services.AddSingleton<IAsyncPolicy<HttpResponseMessage>>(retryPolicy);
-
-                        // 3. Rejestrujemy HttpClient w standardowy sposób
-                        services.AddHttpClient<LeaderboardScraper>();
-
-                        // --- KONIEC ZMIAN ---
-
-                        // Rejestrujemy nasz scraper
-                        services.AddTransient<LeaderboardScraper>();
-                    })
-                    .Build();
-
-                using (var scope = host.Services.CreateScope())
+                try
                 {
-                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                    db.Database.Migrate();
+                    Log.Information("Uruchamianie aplikacji...");
+
+                    // 1. Automatyczne migracje (pobierane z nowo utworzonego zakresu).
+                    var dbContext = services.GetRequiredService<AppDbContext>();
+                    await dbContext.Database.MigrateAsync();
+
+                    // 2. Uruchomienie głównej logiki (również pobierane z tego samego zakresu).
+                    var scraper = services.GetRequiredService<LeaderboardScraper>();
+                    await scraper.RunAsync();
+
+                    Log.Information("Aplikacja zakończyła działanie pomyślnie.");
                 }
-
-                var scraper = host.Services.GetRequiredService<LeaderboardScraper>();
-                await scraper.RunAsync();
-
-                Log.Information("Aplikacja zakończyła działanie pomyślnie.");
-            }
-            catch (Exception ex)
-            {
-                Log.Fatal(ex.GetBaseException(), "Aplikacja zakończyła działanie z powodu nieoczekiwanego błędu.");
-            }
-            finally
-            {
-                await Log.CloseAndFlushAsync();
-                Console.WriteLine("\nNaciśnij dowolny klawisz, aby zamknąć...");
-                Console.ReadKey();
+                catch (Exception ex)
+                {
+                    Log.Fatal(ex.GetBaseException(), "Aplikacja zakończyła działanie z powodu nieoczekiwanego błędu.");
+                }
+                finally
+                {
+                    // Upewniamy się, że wszystkie logi zostaną zapisane.
+                    await Log.CloseAndFlushAsync();
+                }
             }
         }
+
+        // Metoda CreateHostBuilder pozostaje BEZ ZMIAN.
+        public static IHostBuilder CreateHostBuilder(string[] args) =>
+            Host.CreateDefaultBuilder(args)
+                .ConfigureAppConfiguration((hostingContext, config) =>
+                {
+                    var env = hostingContext.HostingEnvironment;
+                    config.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true);
+                    config.AddJsonFile($"appsettings.{env.EnvironmentName}.json", optional: true, reloadOnChange: true);
+                    config.AddEnvironmentVariables();
+                })
+                .UseSerilog()
+                .ConfigureServices((context, services) =>
+                {
+                    var connectionString = context.Configuration.GetConnectionString("DefaultConnection");
+                    if (string.IsNullOrEmpty(connectionString))
+                    {
+                        throw new InvalidOperationException("Nie znaleziono ConnectionString 'DefaultConnection' w konfiguracji.");
+                    }
+
+                    services.AddDbContext<AppDbContext>(options =>
+                        options.UseNpgsql(connectionString));
+
+                    var retryPolicy = HttpPolicyExtensions
+                        .HandleTransientHttpError()
+                        .Or<HttpRequestException>()
+                        .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                            onRetry: (outcome, timespan, retryAttempt, context) =>
+                            {
+                                Log.Warning("Błąd zapytania do API. Status: {StatusCode}, Błąd: {ExceptionMessage}. Ponawianie za {TimeSpan}. Próba {RetryAttempt}/3",
+                                    outcome.Result?.StatusCode, outcome.Exception?.GetBaseException().Message, timespan, retryAttempt);
+                            });
+
+                    services.AddSingleton<IAsyncPolicy<HttpResponseMessage>>(retryPolicy);
+                    services.AddHttpClient<LeaderboardScraper>();
+                    services.AddTransient<LeaderboardScraper>();
+                });
     }
 }

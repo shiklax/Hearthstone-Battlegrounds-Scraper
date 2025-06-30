@@ -17,11 +17,25 @@ obj/
 /packages
 *.nupkg
 
-## Ignoruj lokalne pliki konfiguracyjne (na przyszłość)
+# --- SEKCJA DO DODANIA/ZWERYFIKOWANIA ---
+
+## Ignoruj lokalne pliki konfiguracyjne
+# Pliki te mogą zawierać hasła i klucze deweloperskie.
+# Nigdy nie powinny trafiać do repozytorium.
 appsettings.Development.json
 secrets.json
+*.env
 
-## Ignoruj pliki baz danych
+## Ignoruj lokalne bazy danych
+# Pliki bazy danych SQLite i innych lokalnych baz.
 *.db
 *.db-shm
 *.db-wal
+*.mdf
+*.ldf
+
+## Ignoruj pliki generowane przez Dockera
+# Pliki te są specyficzne dla lokalnego środowiska i niepotrzebne w repo.
+docker-compose.override.yml
+.dockerignore
+.env

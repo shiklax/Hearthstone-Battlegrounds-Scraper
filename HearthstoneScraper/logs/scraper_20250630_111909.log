@@ -1,0 +1,11 @@
+2025-06-30 11:19:09.872 +02:00 [INF] Uruchamianie aplikacji...
+2025-06-30 11:19:09.937 +02:00 [FTL] Aplikacja zakończyła działanie z powodu nieoczekiwanego błędu.
+Microsoft.Extensions.Hosting.HostAbortedException: The host was aborted.
+   at Microsoft.Extensions.Hosting.HostFactoryResolver.HostingListener.ThrowHostAborted()
+   at Microsoft.Extensions.Hosting.HostFactoryResolver.HostingListener.OnNext(KeyValuePair`2 value)
+   at System.Diagnostics.DiagnosticListener.Write(String name, Object value)
+   at System.Diagnostics.DiagnosticSource.Write[T](String name, T value)
+   at Microsoft.Extensions.Hosting.HostBuilder.Write[T](DiagnosticListener diagnosticSource, String name, T value)
+   at Microsoft.Extensions.Hosting.HostBuilder.ResolveHost(IServiceProvider serviceProvider, DiagnosticListener diagnosticListener)
+   at Microsoft.Extensions.Hosting.HostBuilder.Build()
+   at HearthstoneScraper.Program.Main(String[] args) in C:\Users\Radek\source\repos\HearthstoneScraper\HearthstoneScraper\Program.cs:line 38

@@ -1,7 +1,10 @@
 ﻿using ConsolePlot;
 using ConsolePlot.Drawing.Tools;
+using HearthstoneScraper.Core.Dtos;
+using HearthstoneScraper.Core.Services;
 using HearthstoneScraper.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -11,8 +14,6 @@ using System.IO;
 using System.Linq;
 using System.Text; // <-- Może być potrzebny ten using
 using System.Threading.Tasks;
-using HearthstoneScraper.Core.Services;
-using HearthstoneScraper.Core.Dtos;
 
 public class Program
 {
@@ -22,8 +23,24 @@ public class Program
 
         // Reszta kodu bez zmian
         var host = CreateHostBuilder(args).Build();
-        var ui = host.Services.GetRequiredService<UserInterface>();
-        await ui.RunAsync();
+        using (var scope = host.Services.CreateScope())
+        {
+            var services = scope.ServiceProvider;
+
+            try
+            {
+                // Pobieramy UI z zakresowego dostawcy usług, a nie z globalnego
+                var ui = services.GetRequiredService<UserInterface>();
+                await ui.RunAsync();
+            }
+            catch (Exception ex)
+            {
+                // Proste logowanie błędu do konsoli, jeśli coś pójdzie nie tak
+                AnsiConsole.WriteException(ex, ExceptionFormats.ShortenPaths);
+                Console.WriteLine("\nNaciśnij dowolny klawisz, aby zamknąć...");
+                Console.ReadKey();
+            }
+        }
     }
 
     public static IHostBuilder CreateHostBuilder(string[] args) =>
@@ -37,15 +54,25 @@ public class Program
                          // np. logging.AddSerilog(...)
                          // Na razie zostawiamy puste, aby nic się nie wyświetlało.
                      })
+                .ConfigureAppConfiguration((hostingContext, config) =>
+                {
+                    var env = hostingContext.HostingEnvironment;
+                    config.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true);
+                    config.AddJsonFile($"appsettings.{env.EnvironmentName}.json", optional: true, reloadOnChange: true);
+                })
          .ConfigureServices((context, services) =>
          {
              // Definiujemy ścieżkę do bazy danych
-             var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-             var dbPath = Path.Combine(documentsPath, "HearthstoneScraper", "hearthstone_leaderboard.db");
+             var connectionString = context.Configuration.GetConnectionString("DefaultConnection");
+
+             if (string.IsNullOrEmpty(connectionString))
+             {
+                 throw new InvalidOperationException("Nie znaleziono ConnectionString 'DefaultConnection' w konfiguracji. Upewnij się, że masz pliki appsettings.json i appsettings.Development.json.");
+             }
 
              // Rejestrujemy DbContext
              services.AddDbContext<AppDbContext>(options =>
-                 options.UseSqlite($"Data Source={dbPath}"));
+                 options.UseNpgsql(connectionString));
 
              // <<< TA LINIA JEST KLUCZOWA I MUSI TU BYĆ >>>
              // Mówimy kontenerowi: "Gdy ktoś poprosi o LeaderboardService, stwórz nową instancję".

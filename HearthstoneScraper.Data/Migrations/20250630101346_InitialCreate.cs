@@ -1,5 +1,6 @@
 ﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
@@ -15,10 +16,10 @@ namespace HearthstoneScraper.Data.Migrations
                 name: "Players",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "INTEGER", nullable: false)
-                        .Annotation("Sqlite:Autoincrement", true),
-                    BattleTag = table.Column<string>(type: "TEXT", nullable: false),
-                    Region = table.Column<string>(type: "TEXT", nullable: false)
+                    Id = table.Column<int>(type: "integer", nullable: false)
+                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
+                    BattleTag = table.Column<string>(type: "text", nullable: false),
+                    Region = table.Column<string>(type: "text", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -29,10 +30,10 @@ namespace HearthstoneScraper.Data.Migrations
                 name: "Seasons",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "INTEGER", nullable: false)
-                        .Annotation("Sqlite:Autoincrement", true),
-                    BlizzardId = table.Column<int>(type: "INTEGER", nullable: false),
-                    Name = table.Column<string>(type: "TEXT", nullable: false)
+                    Id = table.Column<int>(type: "integer", nullable: false)
+                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
+                    BlizzardId = table.Column<int>(type: "integer", nullable: false),
+                    Name = table.Column<string>(type: "text", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -43,13 +44,13 @@ namespace HearthstoneScraper.Data.Migrations
                 name: "RankHistory",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "INTEGER", nullable: false)
-                        .Annotation("Sqlite:Autoincrement", true),
-                    ScrapeTimestamp = table.Column<DateTime>(type: "TEXT", nullable: false),
-                    Rank = table.Column<int>(type: "INTEGER", nullable: true),
-                    Rating = table.Column<int>(type: "INTEGER", nullable: true),
-                    PlayerId = table.Column<int>(type: "INTEGER", nullable: false),
-                    SeasonId = table.Column<int>(type: "INTEGER", nullable: false)
+                    Id = table.Column<int>(type: "integer", nullable: false)
+                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
+                    ScrapeTimestamp = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
+                    Rank = table.Column<int>(type: "integer", nullable: true),
+                    Rating = table.Column<int>(type: "integer", nullable: true),
+                    PlayerId = table.Column<int>(type: "integer", nullable: false),
+                    SeasonId = table.Column<int>(type: "integer", nullable: false)
                 },
                 constraints: table =>
                 {

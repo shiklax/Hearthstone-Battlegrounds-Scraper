@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "HearthstoneScraper": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}
