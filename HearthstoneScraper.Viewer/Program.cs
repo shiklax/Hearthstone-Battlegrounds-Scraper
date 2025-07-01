@@ -14,6 +14,8 @@ using System.IO;
 using System.Linq;
 using System.Text; // <-- Może być potrzebny ten using
 using System.Threading.Tasks;
+using System.Reflection;
+using Microsoft.Extensions.Configuration;
 
 public class Program
 {
@@ -43,59 +45,53 @@ public class Program
         }
     }
 
+
+    // W pliku HearthstoneScraper.Viewer/Program.cs
+
     public static IHostBuilder CreateHostBuilder(string[] args) =>
-     Host.CreateDefaultBuilder(args)
-                     .ConfigureLogging(logging =>
-                     {
-                         // Usuwamy wszystkich domyślnych dostawców logowania (np. konsolę)
-                         logging.ClearProviders();
+        Host.CreateDefaultBuilder(args)
+            .ConfigureLogging(logging =>
+            {
+                // To jest w porządku, zostawiamy - wycisza domyślne logi .NET
+                logging.ClearProviders();
+            })
+            .ConfigureServices((context, services) =>
+            {
+                var connectionString = context.Configuration.GetConnectionString("DefaultConnection");
 
-                         // Możesz tu dodać własnego dostawcę, jeśli chcesz logować błędy do pliku
-                         // np. logging.AddSerilog(...)
-                         // Na razie zostawiamy puste, aby nic się nie wyświetlało.
-                     })
-                .ConfigureAppConfiguration((hostingContext, config) =>
+                if (string.IsNullOrEmpty(connectionString))
                 {
-                    var env = hostingContext.HostingEnvironment;
-                    config.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true);
-                    config.AddJsonFile($"appsettings.{env.EnvironmentName}.json", optional: true, reloadOnChange: true);
-                })
-         .ConfigureServices((context, services) =>
-         {
-             // Definiujemy ścieżkę do bazy danych
-             var connectionString = context.Configuration.GetConnectionString("DefaultConnection");
+                    throw new InvalidOperationException("Nie znaleziono ConnectionString 'DefaultConnection'.");
+                }
+                services.AddDbContext<AppDbContext>(options =>
+                    options.UseNpgsql(connectionString));
 
-             if (string.IsNullOrEmpty(connectionString))
-             {
-                 throw new InvalidOperationException("Nie znaleziono ConnectionString 'DefaultConnection' w konfiguracji. Upewnij się, że masz pliki appsettings.json i appsettings.Development.json.");
-             }
-
-             // Rejestrujemy DbContext
-             services.AddDbContext<AppDbContext>(options =>
-                 options.UseNpgsql(connectionString));
-
-             // <<< TA LINIA JEST KLUCZOWA I MUSI TU BYĆ >>>
-             // Mówimy kontenerowi: "Gdy ktoś poprosi o LeaderboardService, stwórz nową instancję".
-             services.AddTransient<LeaderboardService>();
-
-             // Rejestrujemy naszą klasę UI
-             services.AddTransient<UserInterface>();
-         });
+                services.AddTransient<LeaderboardService>();
+                services.AddTransient<UserInterface>();
+            });
 }
-
-// Klasa odpowiedzialna za cały interfejs użytkownika
-public class UserInterface
+    // Klasa odpowiedzialna za cały interfejs użytkownika
+    public class UserInterface
 {
+    private readonly IConfiguration _configuration;
+    private int _currentLeaderboardId;
+    private string _currentRegion = string.Empty;
+    private string _currentLeaderboardName = "Nie wybrano";
+
     private readonly AppDbContext _db;
     private readonly LeaderboardService _leaderboardService;
-    public UserInterface(AppDbContext dbContext, LeaderboardService leaderboardService)
+    public UserInterface(AppDbContext dbContext, LeaderboardService leaderboardService, IConfiguration configuration)
     {
         _db = dbContext;
         _leaderboardService = leaderboardService;
+        _configuration = configuration;
     }
 
     public async Task RunAsync()
     {
+        var appVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3);
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        var dbHost = connectionString?.Split(';').FirstOrDefault(x => x.StartsWith("Host="))?.Replace("Host=", "");
         while (true)
         {
             AnsiConsole.Clear();
@@ -105,6 +101,26 @@ public class UserInterface
                     .Color(Color.Yellow));
             AnsiConsole.WriteLine();
 
+
+            var infoGrid = new Grid()
+    .AddColumn(new GridColumn().PadRight(4)) // Dodajemy kolumnę z odstępem
+    .AddColumn();
+
+            infoGrid.AddRow($"[grey]Wersja aplikacji:[/] [bold]{appVersion}[/]", $"[grey]Połączono z bazą:[/] [bold yellow]{dbHost ?? "Brak"}[/]");
+            infoGrid.AddRow($"[grey]Aktywny leaderboard:[/] [bold yellow]{_currentRegion} - {_currentLeaderboardName}[/]", "");
+
+            // 2. Tworzymy Panel, który otacza naszą siatkę
+            var infoPanel = new Panel(infoGrid)
+                .Header("[dim]Informacje o sesji[/]")
+                .Border(BoxBorder.Rounded) // Ustawiamy ramkę dla panelu
+                .Expand(); // Rozszerzamy panel na całą szerokość konsoli
+
+            // 3. Wyświetlamy gotowy panel
+            AnsiConsole.Write(infoPanel);
+
+
+            AnsiConsole.MarkupLine($"[grey]Aktywny leaderboard: [bold yellow]{_currentRegion} - {_currentLeaderboardName}[/][/]");
+            AnsiConsole.WriteLine();
             var choice = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
                     .Title("Co chcesz zrobić?")
@@ -118,6 +134,7 @@ public class UserInterface
                     "Najwięksi wygrani/przegrani (24h)",
                     "Porównaj dwóch graczy (wykres)",
                     "Pokaż szczegółowe statystyki gracza",
+                    "Zmień aktywny leaderboard",
                     "Pokaż statystyki bazy",
                     "Zakończ"
                     }));
@@ -148,6 +165,9 @@ public class UserInterface
                 case "Pokaż szczegółowe statystyki gracza": // <<< NOWA OPCJA
                     await ShowPlayerStatsAsync();
                     break;
+                case "Zmień aktywny leaderboard": // <<< NOWA OPCJA
+                    await SetActiveLeaderboardAsync();
+                    break; // Używamy 'break', aby pętla się odświeżyła i pokazała nowy stan
                 case "Zakończ":
                     return;
             }
@@ -157,13 +177,71 @@ public class UserInterface
             Console.ReadKey(true);
         }
     }
+
+    private async Task SetActiveLeaderboardAsync()
+    {
+        var availableLeaderboards = await _db.RankHistory
+            .Include(rh => rh.Leaderboard)
+            .Include(rh => rh.Player)
+            .Select(rh => new {
+                LeaderboardId = rh.Leaderboard.Id,
+                LeaderboardName = rh.Leaderboard.Name,
+                Region = rh.Player.Region
+            })
+            .Distinct()
+            .ToListAsync();
+
+        if (!availableLeaderboards.Any())
+        {
+            AnsiConsole.MarkupLine("[red]Brak danych w bazie. Uruchom scrapera.[/]");
+            _currentLeaderboardName = "Brak danych";
+            return;
+        }
+
+        var choices = availableLeaderboards
+            .Select(l => $"[yellow]{l.Region}[/] - {l.LeaderboardName}")
+            .ToList();
+
+        var selectedChoice = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title("[bold]Wybierz aktywny leaderboard[/]")
+                .PageSize(10)
+                .AddChoices(choices));
+
+        var selectedIndex = choices.IndexOf(selectedChoice);
+        var selection = availableLeaderboards[selectedIndex];
+
+        // Ustawiamy stan naszej klasy
+        _currentLeaderboardId = selection.LeaderboardId;
+        _currentRegion = selection.Region;
+        _currentLeaderboardName = selection.LeaderboardName;
+
+        AnsiConsole.MarkupLine($"[green]Aktywny leaderboard ustawiony na: {_currentRegion} - {_currentLeaderboardName}[/]");
+        AnsiConsole.MarkupLine("[grey]Naciśnij dowolny klawisz, aby kontynuować...[/]");
+        Console.ReadKey(true);
+    }
     private async Task BrowseFullLeaderboardAsync()
     {
-        var allPlayers = await _leaderboardService.GetFullLeaderboardAsync();
-        if (!allPlayers.Any()) { AnsiConsole.MarkupLine("[red]Brak danych w bazie![/]"); return; }
+        // Krok 1: Sprawdź, czy użytkownik wybrał jakikolwiek leaderboard
+        if (_currentLeaderboardId == 0)
+        {
+            AnsiConsole.MarkupLine("[red]Najpierw wybierz aktywny leaderboard z menu głównego![/]");
+            return; // Wracamy do menu, nie ma sensu iść dalej
+        }
 
-        // Reszta kodu (pętla, sortowanie, paginacja, renderowanie) pozostaje bez zmian,
-        // ponieważ operuje już na liście w pamięci.
+        // Krok 2: Wywołaj serwis z zapisanymi w stanie parametrami
+        var allPlayers = await _leaderboardService.GetFullLeaderboardAsync(_currentLeaderboardId, _currentRegion);
+
+        if (!allPlayers.Any())
+        {
+            AnsiConsole.MarkupLine($"[red]Brak danych w bazie dla [yellow]{_currentRegion} - {_currentLeaderboardName}[/][/]");
+            return;
+        }
+
+        // Od tego momentu reszta kodu (pętla, sortowanie, paginacja) pozostaje
+        // prawie identyczna, ponieważ operuje już na liście w pamięci.
+        // Jedyna zmiana to dodanie nazwy leaderboardu do tytułu tabeli.
+
         string sortBy = "Rank";
         bool ascending = true;
         int currentPage = 1;
@@ -187,8 +265,11 @@ public class UserInterface
 
             AnsiConsole.Clear();
             var table = new Table().Expand().Border(TableBorder.Rounded);
-            string title = $"[cyan]Pełny Ranking (Strona {currentPage}/{totalPages})[/]";
+
+            // <<< ZMIANA: Dodajemy nazwę aktywnego leaderboardu do tytułu >>>
+            string title = $"[cyan]Pełny Ranking: [yellow]{_currentRegion} - {_currentLeaderboardName}[/] (Strona {currentPage}/{totalPages})[/]";
             table.Title(title);
+
             table.AddColumn(sortBy == "Rank" ? $"Rank {(ascending ? '▲' : '▼')}" : "Rank");
             table.AddColumn(sortBy == "BattleTag" ? $"BattleTag {(ascending ? '▲' : '▼')}" : "BattleTag");
             table.AddColumn(sortBy == "Rating" ? $"Rating {(ascending ? '▲' : '▼')}" : "Rating");
@@ -241,26 +322,32 @@ public class UserInterface
     }
     private async Task ShowPlayerStatsAsync()
     {
+        // Sprawdzamy, czy użytkownik wybrał leaderboard
+        if (_currentLeaderboardId == 0)
+        {
+            AnsiConsole.MarkupLine("[red]Najpierw wybierz aktywny leaderboard z menu głównego![/]");
+            return;
+        }
+
         var battleTag = AnsiConsole.Ask<string>("Wpisz [green]BattleTag[/] gracza, którego statystyki chcesz zobaczyć:");
 
-        // 1. Wywołujemy nasz serwis, aby wykonał całą logikę
         AnsiConsole.MarkupLine("[yellow]Obliczanie statystyk...[/]");
-        PlayerStatsDto? stats = await _leaderboardService.GetPlayerStatsAsync(battleTag);
+        // Przekazujemy do serwisu BattleTag ORAZ dane z aktywnego leaderboardu
+        PlayerStatsDto? stats = await _leaderboardService.GetPlayerStatsAsync(battleTag, _currentLeaderboardId, _currentRegion);
 
-        // 2. Sprawdzamy wynik
         if (stats == null)
         {
-            AnsiConsole.MarkupLine($"[red]Gracz o BattleTagu '{battleTag}' nie został znaleziony w bazie danych.[/]");
+            AnsiConsole.MarkupLine($"[red]Gracz o BattleTagu '{battleTag}' nie został znaleziony w regionie [yellow]{_currentRegion}[/][/]");
             return;
         }
 
         if (stats.DaysInRanking == 0)
         {
-            AnsiConsole.MarkupLine($"[yellow]Gracz '{stats.BattleTag}' został znaleziony, ale nie ma jeszcze historii ratingu.[/]");
+            AnsiConsole.MarkupLine($"[yellow]Gracz '{stats.BattleTag}' został znaleziony, ale nie ma jeszcze historii ratingu dla leaderboardu [yellow]{_currentLeaderboardName}[/][/]");
             return;
         }
 
-        // 3. Wyświetlamy gotowe dane z obiektu DTO
+        // Sekcja wyświetlania pozostaje bez zmian, ale dodajemy kontekst do nagłówka
         var panel = new Panel(
             new Table()
                 .Border(TableBorder.None)
@@ -275,7 +362,7 @@ public class UserInterface
                 .AddRow("[bold]Dni w rankingu:[/]", $"[green]{stats.DaysInRanking}[/]")
                 .AddRow("[bold]Dni poza rankingiem:[/]", $"[red]{stats.DaysOutsideRanking}[/]")
         )
-        .Header($"[bold white]Statystyki dla: {stats.BattleTag}[/]")
+        .Header($"[bold white]Statystyki dla: {stats.BattleTag} ({_currentRegion} - {_currentLeaderboardName})[/]")
         .Border(BoxBorder.Rounded)
         .Expand();
 
@@ -283,11 +370,16 @@ public class UserInterface
     }
     private async Task ComparePlayersChartAsync()
     {
+        if (_currentLeaderboardId == 0)
+        {
+            AnsiConsole.MarkupLine("[red]Najpierw wybierz aktywny leaderboard z menu głównego![/]");
+            return;
+        }
         var battleTag1 = AnsiConsole.Ask<string>("Wpisz [green]BattleTag[/] pierwszego gracza:");
         var battleTag2 = AnsiConsole.Ask<string>("Wpisz [cyan]BattleTag[/] drugiego gracza:");
 
         // 1. Wywołujemy serwis, aby pobrał dane dla obu graczy
-        var comparisonData = await _leaderboardService.GetPlayerComparisonDataAsync(battleTag1, battleTag2);
+        var comparisonData = await _leaderboardService.GetPlayerComparisonDataAsync(battleTag1, battleTag2, _currentLeaderboardId, _currentRegion);
 
         // Sprawdzamy, czy serwis zwrócił wystarczającą ilość danych
         if (comparisonData == null)
@@ -346,6 +438,7 @@ public class UserInterface
         plt.AddSeries(xs, ys2.ToArray(), new PointPen(SystemPointBrushes.Braille, ConsoleColor.Cyan));
 
         // Rysowanie i renderowanie
+        AnsiConsole.MarkupLine($"\n[bold yellow]Porównanie graczy w: {_currentRegion} - {_currentLeaderboardName}[/]");
         AnsiConsole.MarkupLine($"\n[bold yellow]Porównanie graczy:[/]");
         plt.Draw();
         plt.Render();
@@ -372,10 +465,16 @@ public class UserInterface
     }
     private async Task ShowDailyMoversAsync()
     {
+        if (_currentLeaderboardId == 0)
+        {
+            AnsiConsole.MarkupLine("[red]Najpierw wybierz aktywny leaderboard z menu głównego![/]");
+            return;
+        }
+
         AnsiConsole.MarkupLine("[yellow]Obliczanie zmian w rankingu z ostatnich 24 godzin...[/]");
 
         // 1. Wywołujemy serwis, aby dostać gotowe dane
-        var movers = await _leaderboardService.GetDailyMoversAsync();
+        var movers = await _leaderboardService.GetDailyMoversAsync(_currentLeaderboardId, _currentRegion);
 
         if (!movers.Any())
         {
@@ -386,7 +485,7 @@ public class UserInterface
 
         // 2. Wyświetlamy wyniki w tabeli
         var table = new Table().Expand().Border(TableBorder.Rounded);
-        table.Title("[cyan]Największe zmiany w rankingu (ostatnie 24h)[/]");
+        table.Title($"[cyan]Największe zmiany w rankingu: [yellow]{_currentRegion} - {_currentLeaderboardName}[/] (24h)[/]");
         table.AddColumn("Miejsce");
         table.AddColumn("BattleTag");
         table.AddColumn("Zmiana Ratingu");
@@ -412,66 +511,70 @@ public class UserInterface
     }
     private async Task ShowPlayerRatingChartAsync()
     {
+        // Sprawdzamy, czy użytkownik wybrał leaderboard
+        if (_currentLeaderboardId == 0)
+        {
+            AnsiConsole.MarkupLine("[red]Najpierw wybierz aktywny leaderboard z menu głównego![/]");
+            return;
+        }
+
         var battleTag = AnsiConsole.Ask<string>("Wpisz [green]BattleTag[/] gracza, którego wykres chcesz zobaczyć:");
 
-        // 1. Pobieramy dane z naszego serwisu
-        var result = await _leaderboardService.GetPlayerChartDataAsync(battleTag);
+        // Wywołujemy serwis z parametrami z aktywnego stanu
+        var result = await _leaderboardService.GetPlayerChartDataAsync(battleTag, _currentLeaderboardId, _currentRegion);
 
-        // Sprawdzamy, czy mamy wystarczająco danych
-        if (result == null || result.Value.History.Count < 2)
+        if (result == null) // Uproszczone sprawdzanie
         {
-            AnsiConsole.MarkupLine($"[red]Nie znaleziono wystarczających danych dla gracza '{battleTag}' do narysowania wykresu.[/]");
+            AnsiConsole.MarkupLine($"[red]Nie znaleziono wystarczających danych dla gracza '{battleTag}' w [yellow]{_currentRegion} - {_currentLeaderboardName}[/][/]");
             return;
         }
 
         var (playerName, history) = result.Value;
 
-        // 2. Przygotowujemy dane dla biblioteki ConsolePlot
         double[] xs = Enumerable.Range(1, history.Count).Select(i => (double)i).ToArray();
         double[] ys = history.Select(h => (double)h.Rating).ToArray();
 
-        // 3. Wyświetlamy nagłówek
-        AnsiConsole.MarkupLine($"\n[bold yellow]Wykres ratingu dla gracza: {playerName}[/]");
+        // Ulepszamy nagłówek, aby pokazywał kontekst
+        AnsiConsole.MarkupLine($"\n[bold yellow]Wykres ratingu dla gracza: {playerName} ({_currentRegion} - {_currentLeaderboardName})[/]");
         AnsiConsole.MarkupLine($"[grey](Pokazywanie ostatnich {history.Count} odczytów)[/]");
         AnsiConsole.MarkupLine("[grey]Oś Y: Rating | Oś X: Kolejne odczyty w czasie[/]");
 
-        // --- Sekcja tworzenia i konfiguracji wykresu ---
+        // Reszta kodu renderowania wykresu pozostaje bez zmian
         var plt = new Plot(width: 80, height: 20);
-
-        // Ustawiamy wygląd osi i siatki
         plt.Axis.Pen = new LinePen(SystemLineBrushes.Double, ConsoleColor.White);
         plt.Grid.Pen = new LinePen(SystemLineBrushes.Dotted, ConsoleColor.DarkGray);
-
-        // Konfigurujemy znaczniki i etykiety
         plt.Ticks.IsVisible = true;
         plt.Ticks.Labels.IsVisible = true;
         plt.Ticks.Labels.Color = ConsoleColor.Cyan;
-
-        // KLUCZOWA LINIA: Mówimy, jak formatować liczby na osiach
-        plt.Ticks.Labels.Format = "F0"; // "F0" = stałoprzecinkowy, 0 miejsc po przecinku
-
-        // Dodajemy naszą serię danych
+        plt.Ticks.Labels.Format = "F0";
         plt.AddSeries(xs, ys, new PointPen(SystemPointBrushes.Braille, ConsoleColor.Yellow));
-
-        // Rysujemy i renderujemy gotowy wykres
         plt.Draw();
         plt.Render();
     }
     private async Task ShowTopLeaderboardAsync()
     {
+        // Sprawdzamy, czy użytkownik wybrał jakikolwiek leaderboard
+        if (_currentLeaderboardId == 0)
+        {
+            AnsiConsole.MarkupLine("[red]Najpierw wybierz aktywny leaderboard z menu głównego![/]");
+            return;
+        }
+
         AnsiConsole.MarkupLine("[yellow]Pobieranie aktualnego rankingu...[/]");
 
-        var allPlayers = await _leaderboardService.GetFullLeaderboardAsync();
+        // Wywołujemy serwis z zapisanymi w stanie parametrami
+        var allPlayers = await _leaderboardService.GetFullLeaderboardAsync(_currentLeaderboardId, _currentRegion);
         var topPlayers = allPlayers.OrderBy(p => p.Rank).Take(25);
 
         if (!topPlayers.Any())
         {
-            AnsiConsole.MarkupLine("[red]Brak danych w bazie![/]");
+            AnsiConsole.MarkupLine($"[red]Brak danych w bazie dla [yellow]{_currentRegion} - {_currentLeaderboardName}[/][/]");
             return;
         }
 
         var table = new Table().Expand().Border(TableBorder.Rounded);
-        table.Title("[cyan]TOP 25 Graczy Battlegrounds (EU)[/]");
+        // Używamy zmiennych stanu, aby tytuł był dynamiczny
+        table.Title($"[cyan]TOP 25 Graczy: [yellow]{_currentRegion} - {_currentLeaderboardName}[/][/]");
         table.AddColumn("Rank").AddColumn("BattleTag").AddColumn("Rating");
 
         foreach (var entry in topPlayers)
@@ -486,17 +589,27 @@ public class UserInterface
     }
     private async Task ShowPlayerHistoryAsync()
     {
+        // Sprawdzamy, czy użytkownik wybrał leaderboard
+        if (_currentLeaderboardId == 0)
+        {
+            AnsiConsole.MarkupLine("[red]Najpierw wybierz aktywny leaderboard z menu głównego![/]");
+            return;
+        }
+
         var battleTag = AnsiConsole.Ask<string>("Wpisz [green]BattleTag[/] gracza, którego chcesz wyszukać:");
-        var playerHistory = await _leaderboardService.GetPlayerHistoryAsync(battleTag);
+
+        // Wywołujemy serwis z dodatkowymi parametrami
+        var playerHistory = await _leaderboardService.GetPlayerHistoryAsync(battleTag, _currentLeaderboardId, _currentRegion);
 
         if (!playerHistory.Any())
         {
-            AnsiConsole.MarkupLine($"[red]Nie znaleziono gracza o BattleTagu: {battleTag}[/]");
+            AnsiConsole.MarkupLine($"[red]Nie znaleziono historii dla gracza '{battleTag}' w [yellow]{_currentRegion} - {_currentLeaderboardName}[/][/]");
             return;
         }
 
         var table = new Table().Expand().Border(TableBorder.Rounded);
-        table.Title($"[cyan]Historia dla gracza: {playerHistory.First().BattleTag}[/]");
+        // Ulepszamy tytuł, aby pokazywał kontekst
+        table.Title($"[cyan]Historia dla gracza: {playerHistory.First().BattleTag} ({_currentRegion} - {_currentLeaderboardName})[/]");
         table.AddColumn("Data zapisu").AddColumn("Rank").AddColumn("Rating");
 
         foreach (var entry in playerHistory)

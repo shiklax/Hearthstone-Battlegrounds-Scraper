@@ -106,6 +106,9 @@ namespace HearthstoneScraper.Scrapers
             }
             _logger.LogInformation("Przetwarzanie {PlayerCount} unikalnych graczy z API dla {Target}.", distinctLivePlayers.Count, target.Name);
 
+            // <<< KLUCZOWA ZMIANA: Pobieramy timestamp TYLKO RAZ na początku >>>
+            var singleScrapeTimestamp = DateTime.UtcNow;
+
             // Pobierz lub stwórz Season i Leaderboard
             var season = await _dbContext.Seasons.FirstOrDefaultAsync(s => s.BlizzardId == apiSeasonId);
             if (season == null)
@@ -148,7 +151,7 @@ namespace HearthstoneScraper.Scrapers
                     Player = dbPlayer,
                     SeasonId = season.Id,
                     LeaderboardId = leaderboard.Id,
-                    ScrapeTimestamp = DateTime.UtcNow,
+                    ScrapeTimestamp = singleScrapeTimestamp, // <<< UŻYWAMY TEJ SAMEJ ZMIENNEJ
                     Rank = apiPlayer.Rank,
                     Rating = apiPlayer.Rating
                 });
@@ -161,7 +164,7 @@ namespace HearthstoneScraper.Scrapers
                     PlayerId = missingPlayer.Id,
                     SeasonId = season.Id,
                     LeaderboardId = leaderboard.Id,
-                    ScrapeTimestamp = DateTime.UtcNow,
+                    ScrapeTimestamp = singleScrapeTimestamp, // <<< UŻYWAMY TEJ SAMEJ ZMIENNEJ
                     Rank = null,
                     Rating = null
                 });
