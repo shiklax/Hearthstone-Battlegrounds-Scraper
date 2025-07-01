@@ -22,6 +22,30 @@ namespace HearthstoneScraper.Data.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("HearthstoneScraper.Data.Models.Leaderboard", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ApiId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiId")
+                        .IsUnique();
+
+                    b.ToTable("Leaderboards");
+                });
+
             modelBuilder.Entity("HearthstoneScraper.Data.Models.Player", b =>
                 {
                     b.Property<int>("Id")
@@ -54,6 +78,9 @@ namespace HearthstoneScraper.Data.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<int>("LeaderboardId")
+                        .HasColumnType("integer");
+
                     b.Property<int>("PlayerId")
                         .HasColumnType("integer");
 
@@ -70,6 +97,8 @@ namespace HearthstoneScraper.Data.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("LeaderboardId");
 
                     b.HasIndex("PlayerId");
 
@@ -100,6 +129,12 @@ namespace HearthstoneScraper.Data.Migrations
 
             modelBuilder.Entity("HearthstoneScraper.Data.Models.RankHistory", b =>
                 {
+                    b.HasOne("HearthstoneScraper.Data.Models.Leaderboard", "Leaderboard")
+                        .WithMany()
+                        .HasForeignKey("LeaderboardId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
                     b.HasOne("HearthstoneScraper.Data.Models.Player", "Player")
                         .WithMany("History")
                         .HasForeignKey("PlayerId")
@@ -111,6 +146,8 @@ namespace HearthstoneScraper.Data.Migrations
                         .HasForeignKey("SeasonId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("Leaderboard");
 
                     b.Navigation("Player");
 

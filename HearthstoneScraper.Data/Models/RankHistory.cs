@@ -12,5 +12,9 @@ namespace HearthstoneScraper.Data.Models
         public virtual Player Player { get; set; }
         public int SeasonId { get; set; }
         public virtual Season Season { get; set; }
+
+        // <<< DODAJ TE DWIE LINIE >>>
+        public int LeaderboardId { get; set; }
+        public virtual Leaderboard Leaderboard { get; set; } = null!;
     }
 }

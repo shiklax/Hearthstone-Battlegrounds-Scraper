@@ -9,6 +9,7 @@ namespace HearthstoneScraper.Data
         public DbSet<Season> Seasons { get; set; }
         public DbSet<RankHistory> RankHistory { get; set; }
 
+        public DbSet<Leaderboard> Leaderboards { get; set; }
         // Konstruktor potrzebny do Dependency Injection
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -18,6 +19,9 @@ namespace HearthstoneScraper.Data
             modelBuilder.Entity<Player>()
                 .HasIndex(p => new { p.BattleTag, p.Region })
                 .IsUnique();
+            modelBuilder.Entity<Leaderboard>()
+    .HasIndex(l => l.ApiId)
+    .IsUnique();
         }
     }
 }

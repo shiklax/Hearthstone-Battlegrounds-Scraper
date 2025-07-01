@@ -1,9 +1,5 @@
 ﻿// HearthstoneScraper/Program.cs
-using System;
-using System.IO;
-using System.Linq;
-using System.Net.Http;
-using System.Threading.Tasks;
+using HearthstoneScraper.Configuration;
 using HearthstoneScraper.Data;
 using HearthstoneScraper.Scrapers;
 using Microsoft.EntityFrameworkCore;
@@ -13,6 +9,11 @@ using Microsoft.Extensions.Hosting;
 using Polly;
 using Polly.Extensions.Http;
 using Serilog;
+using System;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Threading.Tasks;
 
 namespace HearthstoneScraper
 {
@@ -84,7 +85,7 @@ namespace HearthstoneScraper
                     {
                         throw new InvalidOperationException("Nie znaleziono ConnectionString 'DefaultConnection' w konfiguracji.");
                     }
-
+                    services.Configure<List<ScrapeTarget>>(context.Configuration.GetSection("ScrapeTargets"));
                     services.AddDbContext<AppDbContext>(options =>
                         options.UseNpgsql(connectionString));
 
