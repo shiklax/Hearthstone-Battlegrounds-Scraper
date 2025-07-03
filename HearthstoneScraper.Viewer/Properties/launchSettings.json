@@ -1,9 +1,9 @@
 {
   "profiles": {
-    "HearthstoneScraper.Viewer": { // Nazwa profilu musi pasować do nazwy projektu
+    "HearthstoneScraper.Viewer": {
       "commandName": "Project",
       "environmentVariables": {
-        "DOTNET_ENVIRONMENT": "Development" // <<< TA LINIA JEST KLUCZOWA
+        "DOTNET_ENVIRONMENT": "Development"
       }
     }
   }
