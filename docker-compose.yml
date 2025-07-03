@@ -1,13 +1,13 @@
+# Wersja wczytująca plik .env z zewnętrznej lokalizacji
 services:
   db:
     image: postgres:15-alpine
     container_name: hs-postgres-db
     restart: unless-stopped
-    environment:
-      # Odwołujemy się do zmiennych, które będą w pliku .env
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+    # <<< POCZĄTEK ZMIAN >>>
+    env_file:
+      - /DATA/PROJECTS/ENV/.env.scraper
+    # <<< KONIEC ZMIAN >>>
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -27,8 +27,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # <<< POCZĄTEK ZMIAN >>>
+    env_file:
+      - /DATA/PROJECTS/ENV/.env.scraper
+    # <<< KONIEC ZMIAN >>>
     environment:
-      # Connection string również jest budowany ze zmiennych
+      # Connection string wciąż jest budowany ze zmiennych wczytanych z pliku .env
       - ConnectionStrings__DefaultConnection=Host=db;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
 
 volumes:
