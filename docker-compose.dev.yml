@@ -1,0 +1,18 @@
+# Plik: docker-compose.dev.yml
+services:
+  db_dev:
+    image: postgres:15-alpine
+    container_name: hs-postgres-local-dev
+    restart: always
+    environment:
+      # Odwołania do zmiennych z pliku .env.dev
+      POSTGRES_USER: ${POSTGRES_USER_DEV}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_DEV}
+      POSTGRES_DB: ${POSTGRES_DB_DEV}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_dev_data:

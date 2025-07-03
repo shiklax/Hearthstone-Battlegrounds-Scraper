@@ -25,6 +25,7 @@ obj/
 appsettings.Development.json
 secrets.json
 *.env
+.env.*
 
 ## Ignoruj lokalne bazy danych
 # Pliki bazy danych SQLite i innych lokalnych baz.
