@@ -285,7 +285,7 @@ public class Program
             AnsiConsole.Markup("[grey]Opcje:[/] ");
             AnsiConsole.Markup("[yellow][[R]][/]ank, ");
             AnsiConsole.Markup("[yellow][[B]][/]attleTag, ");
-            AnsiConsole.Markup("[yellow][[T]][/]ating | ");
+            AnsiConsole.Markup("[yellow][[T]][/]Rating | ");
             AnsiConsole.Markup("[grey]Kierunek:[/] [yellow][[Spacja]][/] | ");
             AnsiConsole.Markup("[grey]Wyjdź:[/] [yellow][[Q]][/]");
             AnsiConsole.WriteLine();
